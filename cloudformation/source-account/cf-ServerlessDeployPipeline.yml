@@ -65,6 +65,10 @@ Parameters:
     Default: masterfirme
     AllowedPattern: "[A-Za-z0-9-]+"
 
+  GitHubApp:
+    Type: String
+    Default: firme-app
+
   GitHubRepo:
     Type: String
     Default: file-manager
@@ -161,7 +165,7 @@ Resources:
                 - Name: SourceArtifact
               Configuration:
                 Owner: !Ref GitHubOwner
-                Repo: !Ref GitHubRepo
+                Repo: !Join ["/", [!Ref GitHubApp, !Ref GitHubRepo]]
                 Branch: !Ref GitHubBranch
                 PollForSourceChanges: false
                 OAuthToken: !Ref GitHubOAuthToken
