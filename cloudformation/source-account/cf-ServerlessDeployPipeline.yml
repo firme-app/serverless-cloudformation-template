@@ -68,7 +68,6 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: file-manager
-    AllowedPattern: "[A-Za-z0-9-]+"
 
   GitHubBranch:
     Type: String
