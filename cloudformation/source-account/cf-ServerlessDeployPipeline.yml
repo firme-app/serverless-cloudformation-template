@@ -20,7 +20,7 @@ Description: The AWS CloudFormation template for building a CICD pipeline for cr
 Parameters:
   # Account Id of the deployment target.
   TargetAccountID:
-    Description : Account ID of the target account where the deployment will happen.
+    Description: Account ID of the target account where the deployment will happen.
     Type: String
     ConstraintDescription: Must be a valid AWS Account ID without hyphens.
     AllowedPattern: '\d{12}'
@@ -36,43 +36,78 @@ Parameters:
     Type: String
     Description: Cross Account Role to be assumed by Cloudformation Service to create serverless resources
     Default: cf-execution-role-serverless
-  # Source Code Repository for pipeline
-  CodeCommitRepoName:
-    Type: String
-    Description: Enter the name of code commit repo.
-    Default: my-serverless-api
-  # Source Code Branch for pipeline
-  CodeCommitRepoBranch:
-    Type: String
-    Description: Enter the branch name of code commit repo.
-    Default: master
-    AllowedValues:
-      - develop
-      - release
-      - master
   # Deployment Target Environment
   DeploymentEnvironment:
     Type: String
     Description: Select name of the environment to which the pipeline is deploying.
-    Default: DEV
+    Default: Development
     AllowedValues:
-      - DEV
-      - STAGE
-      - PROD
+      - Development
+      - Staging
+      - Production
+
+  ################################ NEW GITHUB REPOSITORY ##########################
+
+  # *** This value must always be passed in when creating / updating stack
+  # "NoEcho" is set to true, for security, so token won't be visible when examining the resulting stack
+  GitHubOAuthToken:
+    Type: String
+    NoEcho: true
+    AllowedPattern: "[A-Za-z0-9_]*"
+
+  # *** The remaining parameters should either be:
+  # - overridden via changing "Default" here (PREFERABLE, since then they're in source control)
+  # - or you can pass them in when creating / updating the stack
+
+  # *** The owner of the Github repo for this application.
+  GitHubOwner:
+    Type: String
+    Default: masterfirme
+    AllowedPattern: "[A-Za-z0-9-]+"
+
+  GitHubRepo:
+    Type: String
+    Default: file-manager
+    AllowedPattern: "[A-Za-z0-9-]+"
+
+  GitHubBranch:
+    Type: String
+    Default: main
+    AllowedValues:
+      - develop
+      - staging
+      - main
 
 Resources:
-  ################################ CODECOMMIT REPO ################################
-  CodeCommitRepo:
-    Type: AWS::CodeCommit::Repository
+  # 'GithubWebhook' satisfies two requirements:
+  # -- Means that updates are pushed from GitHub, rather than AWS having to poll
+  # -- Means we can filter for required changes
+  GithubWebhook:
+    Type: "AWS::CodePipeline::Webhook"
     Properties:
-      RepositoryDescription: Repo for Serverless Lambda API
-      RepositoryName: !Ref CodeCommitRepoName
-  ################################ END CODECOMMIT REPO ################################
+      Authentication: GITHUB_HMAC
+      AuthenticationConfiguration:
+        SecretToken: !Ref GitHubOAuthToken
+      RegisterWithThirdParty: true
+      Filters:
+        - JsonPath: "$.ref"
+          MatchEquals: refs/heads/{Branch}
+      TargetPipeline: !Ref CodePipeline
+      TargetAction: Source
+      TargetPipelineVersion: !GetAtt CodePipeline.Version
 
   CodeDeploy:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Join [ '-', [ 'Serverless-CodeBuild-Deploy', !GetAtt CodeCommitRepo.Name, !Join [ '-', !Split [ '/', !Ref CodeCommitRepoBranch ] ] ]]
+      Name:
+        !Join [
+          "-",
+          [
+            "Serverless-CodeBuild-Deploy",
+            !Ref GitHubRepo,
+            !Join ["-", !Split ["/", !Ref GitHubBranch]],
+          ],
+        ]
       Artifacts:
         Type: CODEPIPELINE
       Source:
@@ -83,32 +118,31 @@ Resources:
         Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
         ComputeType: BUILD_GENERAL1_SMALL
         EnvironmentVariables:
-          -
-            Name: CROSS_ACCOUNT_ROLE
+          - Name: CROSS_ACCOUNT_ROLE
             Type: PLAINTEXT
-            Value: !Sub 'arn:aws:iam::${TargetAccountID}:role/${CodePipelineAssumeRoleName}'
-          -
-            Name: CF_EXECUTION_ROLE
+            Value: !Sub "arn:aws:iam::${TargetAccountID}:role/${CodePipelineAssumeRoleName}"
+          - Name: CF_EXECUTION_ROLE
             Type: PLAINTEXT
-            Value: !Sub 'arn:aws:iam::${TargetAccountID}:role/${CFExecutionRoleName}'
-          -
-            Name: TARGET_ACCOUNT_ID
+            Value: !Sub "arn:aws:iam::${TargetAccountID}:role/${CFExecutionRoleName}"
+          - Name: TARGET_ACCOUNT_ID
             Type: PLAINTEXT
             Value: !Ref TargetAccountID
-          -
-            Name: STAGE
+          - Name: STAGE
             Type: PLAINTEXT
             Value: !Ref DeploymentEnvironment
-      Tags:
-        - Key: category
-          Value: goldmine
-        - Key: project_name
-          Value: serverless-cross-account-deployment
 
   CodePipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
-      Name: !Join [ '-', [ 'Serverless-CodePipeline', !GetAtt CodeCommitRepo.Name, !Join [ '-', !Split [ '/', !Ref CodeCommitRepoBranch ] ] ]]
+      Name:
+        !Join [
+          "-",
+          [
+            "Serverless-CodePipeline",
+            !Ref GitHubRepo,
+            !Join ["-", !Split ["/", !Ref GitHubBranch]],
+          ],
+        ]
       ArtifactStore:
         Location: !Ref CodePipelineS3Bucket
         Type: S3
@@ -120,16 +154,18 @@ Resources:
             - Name: Source
               ActionTypeId:
                 Category: Source
-                Owner: AWS
-                Provider: CodeCommit
+                Owner: ThirdParty
+                Provider: GitHub
                 Version: 1
               RunOrder: 10
               OutputArtifacts:
                 - Name: SourceArtifact
               Configuration:
-                BranchName: !Ref CodeCommitRepoBranch
-                PollForSourceChanges: False
-                RepositoryName: !GetAtt CodeCommitRepo.Name
+                Owner: !Ref GitHubOwner
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                PollForSourceChanges: false
+                OAuthToken: !Ref GitHubOAuthToken
         - Name: Deploy
           Actions:
             - Name: Deploy-Lambda
@@ -146,33 +182,6 @@ Resources:
               Configuration:
                 ProjectName: !Ref CodeDeploy
 
-  CodeCheckinCloudWatchEvent:
-    Type: AWS::Events::Rule
-    Properties:
-      Description: CloudWatch event rule to trigger CICD pipeline upon code check into code commit repo
-      EventPattern:
-        source:
-          - aws.codecommit
-        detail-type:
-          - "CodeCommit Repository State Change"
-        resources:
-          - !GetAtt CodeCommitRepo.Arn
-        detail:
-          event:
-            - referenceCreated
-            - referenceUpdated
-          referenceType:
-            - branch
-          referenceName:
-            - !Ref CodeCommitRepoBranch
-      Name: !Join [ '-', [ 'Serverless-CodePipeline', !GetAtt CodeCommitRepo.Name, !Join [ '-', !Split [ '/', !Ref CodeCommitRepoBranch ] ] ]]
-      State: ENABLED
-      Targets:
-        -
-          Arn: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipeline}
-          Id: !Join [ '-', [ !Sub 'Serverless-Deployment-Pipeline', !Join [ '-', !Split [ '/', !Ref CodeCommitRepoBranch ] ] ]]
-          RoleArn: !GetAtt CloudWatchPipelineTriggerRole.Arn
-
   ############################# PRE-REQUISITES FOR PIPELINE ################################
   CodePipelineKMSKey:
     Type: AWS::KMS::Key
@@ -181,34 +190,34 @@ Resources:
       Enabled: true
       EnableKeyRotation: true
       KeyPolicy:
-          Version: '2012-10-17'
-          Id: serverless-codepipeline-key
-          Statement:
-            - Sid: KmsAllowKeyAdministration
-              Effect: Allow
-              Principal:
-                AWS:
-                  - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
-              Action:
-                - 'kms:*'
-              Resource: '*'
-            - Sid: KmsAllowKeyUsage
-              Effect: Allow
-              Principal:
-                AWS:
-                  - !GetAtt CodePipelineRole.Arn
-              Action:
-                - kms:Decrypt
-                - kms:DescribeKey
-                - kms:Encrypt
-                - kms:GenerateDataKey
-                - kms:GenerateDataKeyWithoutPlainText
-                - kms:ReEncrypt
-                - kms:ReEncryptTo
-                - kms:ReEncryptFrom
-                - kms:TagResource
-                - kms:CreateKey
-              Resource: '*'
+        Version: "2012-10-17"
+        Id: serverless-codepipeline-key
+        Statement:
+          - Sid: KmsAllowKeyAdministration
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - "kms:*"
+            Resource: "*"
+          - Sid: KmsAllowKeyUsage
+            Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt CodePipelineRole.Arn
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:GenerateDataKey
+              - kms:GenerateDataKeyWithoutPlainText
+              - kms:ReEncrypt
+              - kms:ReEncryptTo
+              - kms:ReEncryptFrom
+              - kms:TagResource
+              - kms:CreateKey
+            Resource: "*"
       Tags:
         - Key: category
           Value: goldmine
@@ -224,20 +233,19 @@ Resources:
   CodePipelineS3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 'serverless-codepipeline-bucket-${AWS::Region}-${AWS::AccountId}'
+      BucketName: !Sub "serverless-codepipeline-bucket-${AWS::Region}-${AWS::AccountId}"
       AccessControl: Private
       LifecycleConfiguration:
         Rules:
           - Id: LccRule1-ExpireAllNoncurrentIn8Days
             NoncurrentVersionExpirationInDays: 8
-            Prefix: ''
+            Prefix: ""
             Status: Enabled
       VersioningConfiguration:
         Status: Enabled
       BucketEncryption:
-        ServerSideEncryptionConfiguration :
-          -
-            ServerSideEncryptionByDefault:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
               KMSMasterKeyID: !GetAtt CodePipelineKMSKey.Arn
               SSEAlgorithm: aws:kms
       Tags:
@@ -252,8 +260,7 @@ Resources:
       Bucket: !Ref CodePipelineS3Bucket
       PolicyDocument:
         Statement:
-          -
-            Action:
+          - Action:
               - s3:List*
               - s3:Get*
               - s3:Put*
@@ -276,8 +283,7 @@ Resources:
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
-          -
-            Effect: Allow
+          - Effect: Allow
             Principal:
               Service:
                 - codebuild.amazonaws.com
@@ -294,7 +300,7 @@ Resources:
       PolicyDocument:
         Version: 2012-10-17
         Statement:
-          -  # Allow codebuild to perform encryption and decryption
+          - # Allow codebuild to perform encryption and decryption
             Sid: KMSPolicy
             Effect: Allow
             Action:
@@ -307,7 +313,7 @@ Resources:
               - kms:Generate*
             Resource:
               - !GetAtt CodePipelineKMSKey.Arn
-          -  # Allow codebuild to write to cloudwatch
+          - # Allow codebuild to write to cloudwatch
             Sid: CloudWatchLogsPermissionsForAllCodeBuildProjects
             Effect: Allow
             Action:
@@ -315,7 +321,7 @@ Resources:
             Resource:
               - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
               - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*:*
-          -  # Allow codebuild to list and get objects from any bucket
+          - # Allow codebuild to list and get objects from any bucket
             Sid: S3BucketPolicy
             Effect: Allow
             Action:
@@ -323,7 +329,7 @@ Resources:
               - s3:ListBucket*
             Resource:
               - !GetAtt CodePipelineS3Bucket.Arn
-          -  # Allow codebuild to get objects from codepipeline service buckets
+          - # Allow codebuild to get objects from codepipeline service buckets
             Sid: S3ObjectPolicy
             Effect: Allow
             Action:
@@ -332,20 +338,13 @@ Resources:
               - s3:GetObjectVersion
             Resource:
               - !Sub ${CodePipelineS3Bucket.Arn}/*
-          -  # Allow codebuild to assume cross account role
+          - # Allow codebuild to assume cross account role
             Sid: CrossAccountAssumeRolePolicy
             Effect: Allow
             Action:
               - sts:AssumeRole
             Resource:
-              - !Sub 'arn:aws:iam::${TargetAccountID}:role/${CodePipelineAssumeRoleName}'
-          -  # Allow codebuild to access repos
-            Sid: CodeCommitAccessPolicy
-            Effect: Allow
-            Action:
-              - codecommit:*
-            Resource:
-              - !GetAtt CodeCommitRepo.Arn
+              - !Sub "arn:aws:iam::${TargetAccountID}:role/${CodePipelineAssumeRoleName}"
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -354,15 +353,14 @@ Resources:
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
-        -
-          Effect: Allow
-          Action:
-            - sts:AssumeRole
-          Principal:
-            Service:
-              # Only CodePipeline service can assume this role
-              # No one else can assume this role
-              - codepipeline.amazonaws.com
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                # Only CodePipeline service can assume this role
+                # No one else can assume this role
+                - codepipeline.amazonaws.com
 
   CodePipelinePolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -374,7 +372,7 @@ Resources:
       PolicyDocument:
         Version: 2012-10-17
         Statement:
-          -  # Allow codepipeline to perform encryption and decryption
+          - # Allow codepipeline to perform encryption and decryption
             Sid: KMSPolicy
             Effect: Allow
             Action:
@@ -387,18 +385,7 @@ Resources:
               - kms:Generate*
             Resource:
               - !GetAtt CodePipelineKMSKey.Arn
-          -  # Allow codepipeline to get from our repos
-            Sid: CodeCommitPermissions
-            Effect: Allow
-            Action:
-              - codecommit:GetBranch
-              - codecommit:GetCommit
-              - codecommit:UploadArchive
-              - codecommit:GetUploadArchiveStatus
-              - codecommit:CancelUploadArchive
-            Resource:
-              - !GetAtt CodeCommitRepo.Arn
-          -  # Allow codepipeline to list and get objects from any bucket
+          - # Allow codepipeline to list and get objects from any bucket
             Sid: S3BucketPolicy
             Effect: Allow
             Action:
@@ -406,7 +393,7 @@ Resources:
               - s3:ListBucket*
             Resource:
               - !GetAtt CodePipelineS3Bucket.Arn
-          -  # Allow codepipeline to put and get objects from codepipeline service buckets
+          - # Allow codepipeline to put and get objects from codepipeline service buckets
             Sid: S3ObjectPolicy
             Effect: Allow
             Action:
@@ -418,14 +405,14 @@ Resources:
               - s3:ListMultipartUploadParts
             Resource:
               - !Sub ${CodePipelineS3Bucket.Arn}/*
-          -  # Allow codepipeline to pass role to codebuild
+          - # Allow codepipeline to pass role to codebuild
             Sid: PassRolePolicy
             Effect: Allow
             Action:
               - iam:PassRole
             Resource:
-              - '*'
-          -  # Allow codepipeline to start codebuild
+              - "*"
+          - # Allow codepipeline to start codebuild
             Sid: CodeBuildPolicy
             Effect: Allow
             Action:
@@ -433,7 +420,7 @@ Resources:
               - codebuild:BatchGetBuilds
             Resource:
               - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*"
-          -  # Allow codepipeline to assume cross account role
+          - # Allow codepipeline to assume cross account role
             Sid: CrossAccountAssumeRolePolicy
             Effect: Allow
             Action:
@@ -451,7 +438,7 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-                  - events.amazonaws.com
+                - events.amazonaws.com
             Action:
               - sts:AssumeRole
       Policies:
@@ -476,16 +463,6 @@ Outputs:
     Value: !Sub "https://console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${CodePipeline}"
     Export:
       Name: Serverless-CodePipelineUrl
-  OutCodeCommitRepoARN:
-    Value: !GetAtt CodeCommitRepo.Arn
-    Description: ARN for the Serverless Lambda Api Repo
-    Export:
-      Name: my-serverless-lambda-api-repo-arn
-  OutCodeCommitRepoURL:
-    Value: !GetAtt CodeCommitRepo.CloneUrlHttp
-    Description: The URL to be used for Cloning over HTTPS
-    Export:
-      Name: my-serverless-lambda-api-repo-url
   OutCodeBuildRoleArn:
     Value: !GetAtt CodeBuildRole.Arn
     Description: ARN for CodeBuild Role
