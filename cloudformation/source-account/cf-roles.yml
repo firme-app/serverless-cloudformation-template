@@ -1,0 +1,219 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: The AWS CloudFormation template for building a CICD pipeline for cross account deployment to S3 bucket.
+
+Parameters:
+  # Account Id of the deployment target.
+  TargetAccountID:
+    Description: Account ID of the target account where the deployment will happen.
+    Type: String
+    ConstraintDescription: Must be a valid AWS Account ID without hyphens.
+    AllowedPattern: '\d{12}'
+    MinLength: 12
+    MaxLength: 12
+  # Cross Account Role to be assumed by code pipeline to carry out deployment
+  CodePipelineAssumeRoleName:
+    Type: String
+    Description: Cross Account Role to be assumed by code pipeline to carry out deployment
+    Default: cross-account-role-serverless-deployment
+
+Resources:
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub Serverless-CodeBuild-Role-${TargetAccountID}
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  CodeBuildPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Allows CodeBuild to perform builds and deploys
+      ManagedPolicyName: !Sub Serverless-CodeBuild-Policy-${TargetAccountID}
+      Roles:
+        - !Ref CodeBuildRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - # Allow codebuild to perform encryption and decryption
+            Sid: KMSPolicy
+            Effect: Allow
+            Action:
+              - kms:DescribeKey
+              - kms:GetKeyPolicy
+              - kms:List*
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:Generate*
+            Resource:
+              - "*"
+          - # Allow codebuild to write to cloudwatch
+            Sid: CloudWatchLogsPermissionsForAllCodeBuildProjects
+            Effect: Allow
+            Action:
+              - logs:*
+            Resource:
+              - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*:*
+          - # Allow codebuild to list and get objects from any bucket
+            Sid: S3BucketPolicy
+            Effect: Allow
+            Action:
+              - s3:GetBucket*
+              - s3:ListBucket*
+            Resource:
+              - "*"
+          - # Allow codebuild to get objects from codepipeline service buckets
+            Sid: S3ObjectPolicy
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource:
+              - "*"
+          - # Allow codebuild to assume cross account role
+            Sid: CrossAccountAssumeRolePolicy
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Resource:
+              - !Sub "arn:aws:iam::${TargetAccountID}:role/${CodePipelineAssumeRoleName}"
+          - # Allow codebuild to access secret manager
+            Sid: SecretManagerGetValuePolicy
+            Effect: Allow
+            Resource:
+              - "*"
+            Action:
+              - secretsmanager:GetSecretValue
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub Serverless-CodePipeline-Role-${TargetAccountID}
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                # Only CodePipeline service can assume this role
+                # No one else can assume this role
+                - codepipeline.amazonaws.com
+
+  CodePipelinePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: allows cloudformation to create/update/delete IAM Roles
+      ManagedPolicyName: !Sub Serverless-CodePipeline-Policy-${TargetAccountID}
+      Roles:
+        - !Ref CodePipelineRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - # Allow codepipeline to perform encryption and decryption
+            Sid: KMSPolicy
+            Effect: Allow
+            Action:
+              - kms:DescribeKey
+              - kms:GetKeyPolicy
+              - kms:List*
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:Generate*
+            Resource:
+              - "*"
+          - # Allow codepipeline to list and get objects from any bucket
+            Sid: S3BucketPolicy
+            Effect: Allow
+            Action:
+              - s3:GetBucket*
+              - s3:ListBucket*
+            Resource:
+              - "*"
+          - # Allow codepipeline to put and get objects from codepipeline service buckets
+            Sid: S3ObjectPolicy
+            Effect: Allow
+            Action:
+              - s3:AbortMultipartUpload
+              - s3:GetObject*
+              - s3:PutObject*
+              - s3:DeleteObject*
+              - s3:RestoreObject
+              - s3:ListMultipartUploadParts
+            Resource:
+              - "*"
+          - # Allow codepipeline to pass role to codebuild
+            Sid: PassRolePolicy
+            Effect: Allow
+            Action:
+              - iam:PassRole
+            Resource:
+              - "*"
+          - # Allow codepipeline to start codebuild
+            Sid: CodeBuildPolicy
+            Effect: Allow
+            Action:
+              - codebuild:StartBuild
+              - codebuild:BatchGetBuilds
+            Resource:
+              - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*"
+          - # Allow codepipeline to assume cross account role
+            Sid: CrossAccountAssumeRolePolicy
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Resource:
+              - !Sub arn:aws:iam::${TargetAccountID}:role/${CodePipelineAssumeRoleName}
+
+  CloudWatchPipelineTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub Serverless-CloudWatch-Pipeline-Trigger-${TargetAccountID}
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub Serverless-CloudWatch-Pipeline-Trigger-Policy-${TargetAccountID}
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codepipeline:StartPipelineExecution
+                Resource: # Allow CloudWatch to trigger any pipeline
+                  - !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:*
+
+Outputs:
+  OutCodeBuildRoleArn:
+    Value: !GetAtt CodeBuildRole.Arn
+    Description: ARN for CodeBuild Role
+    Export:
+      Name: !Sub Serverless-CodeBuildRoleArn-${TargetAccountID}
+  OutCodePipelineRoleArn:
+    Value: !GetAtt CodePipelineRole.Arn
+    Description: ARN for CodePipeline Role
+    Export:
+      Name: !Sub Serverless-CodePipelineRoleArn-${TargetAccountID}
+  OutCloudWatchPipelineTriggerRoleArn:
+    Value: !GetAtt CloudWatchPipelineTriggerRole.Arn
+    Description: ARN for CloudWatch Events to trigger CodePipeline
+    Export:
+      Name: !Sub Serverless-CloudWatchPipelineTriggerRoleArn-${TargetAccountID}
