@@ -212,7 +212,8 @@ Resources:
   CodePipelineS3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Join ["-", [!Ref GitHubRepo, !Ref GitHubBranch]]
+      BucketName:
+        !Join ["-", [!Ref GitHubRepo, !Ref GitHubBranch, !Ref TargetAccountID]]
       AccessControl: Private
       LifecycleConfiguration:
         Rules:
