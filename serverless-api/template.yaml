@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: file-manager
+    Description: file-manager
+    Author: firme
+    SemanticVersion: 0.0.2
+
+Parameters:
+  LogLevel:
+    Type: String
+    Description: Log Level
+    Default: info
+
+# Resources declares the AWS resources that you want to include in the stack
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resources-section-structure.html
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Tracing: Active
+    Timeout: 30
+    MemorySize: 1024
+    Runtime: nodejs14.x
+    Tags:
+      Service: 'file-manager'
+    Environment:
+      Variables:
+        LOG_LEVEL: !Ref LogLevel
+  Api:
+    TracingEnabled: True
+    EndpointConfiguration: REGIONAL
+
+Resources:
+  # https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+
+  IdentityCardBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub ${AWS::AccountId}-identity-card-bucket
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+
+  LegalConstitutionBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub ${AWS::AccountId}-legal-constitution-bucket
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+
+  FileBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub ${AWS::AccountId}-file-bucket
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+
+  GetFile:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/presentation/api
+      Handler: get-file.handler
+      Events:
+        GetFile:
+          Type: Api
+          Properties:
+            Path: /files/{fileId}/{fileType}
+            Method: get
+      Environment:
+        Variables:
+          BUCKET_REGION: us-east-1
+          IDENTITY_CARD_BUCKET_NAME: !Ref IdentityCardBucket
+          DOCUMENT_BUCKET_NAME: !Ref FileBucket
+          LEGAL_CONSTITUTION_BUCKET_NAME: !Ref LegalConstitutionBucket
+          S3_EXPIRATION_TIME: 30
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref FileBucket
+        - S3ReadPolicy:
+            BucketName: !Ref IdentityCardBucket
+        - S3ReadPolicy:
+            BucketName: !Ref LegalConstitutionBucket
+
+  UploadFile:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/presentation/api
+      Handler: upload-file.handler
+      Events:
+        GetFile:
+          Type: Api
+          Properties:
+            Path: /files
+            Method: post
+      Environment:
+        Variables:
+          BUCKET_REGION: us-east-1
+          S3_EXPIRATION_TIME: 30
+          IDENTITY_CARD_BUCKET_NAME: !Ref IdentityCardBucket
+          DOCUMENT_BUCKET_NAME: !Ref FileBucket
+          LEGAL_CONSTITUTION_BUCKET_NAME: !Ref LegalConstitutionBucket
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref FileBucket
+        - S3WritePolicy:
+            BucketName: !Ref IdentityCardBucket
+        - S3ReadPolicy:
+            BucketName: !Ref IdentityCardBucket
+        - S3ReadPolicy:
+            BucketName: !Ref LegalConstitutionBucket
+        - S3WritePolicy:
+            BucketName: !Ref FileBucket
+        - S3WritePolicy:
+            BucketName: !Ref LegalConstitutionBucket
+
+  DeleteFile:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/presentation/api
+      Handler: delete-file.handler
+      Events:
+        UploadFile:
+          Type: Api
+          Properties:
+            Path: /files/{fileId}/{fileType}
+            Method: delete
+      Environment:
+        Variables:
+          BUCKET_REGION: us-east-1
+          IDENTITY_CARD_BUCKET_NAME: !Ref IdentityCardBucket
+          DOCUMENT_BUCKET_NAME: !Ref FileBucket
+          LEGAL_CONSTITUTION_BUCKET_NAME: !Ref LegalConstitutionBucket
+          S3_EXPIRATION_TIME: 30
+      Policies:
+        - S3FullAccessPolicy:
+            BucketName: !Ref FileBucket
+        - S3FullAccessPolicy:
+            BucketName: !Ref IdentityCardBucket
+        - S3FullAccessPolicy:
+            BucketName: !Ref LegalConstitutionBucket
