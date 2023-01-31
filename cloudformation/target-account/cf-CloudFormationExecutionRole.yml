@@ -85,6 +85,11 @@ Resources:
             Action:
               - ssm:GetParameters
             Resource: "*"
+          - Sid: SNS
+            Effect: Allow
+            Action:
+              - SNS:GetTopicAttributes
+            Resource: "*"
 
 Outputs:
   OutCFExecutionRole:
