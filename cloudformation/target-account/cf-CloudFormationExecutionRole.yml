@@ -89,6 +89,7 @@ Resources:
             Effect: Allow
             Action:
               - SNS:GetTopicAttributes
+              - SNS:CreateTopic
             Resource: "*"
 
 Outputs:
