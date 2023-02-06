@@ -91,6 +91,7 @@ Resources:
               - SNS:GetTopicAttributes
               - SNS:CreateTopic
               - SNS:TagResource
+              - SNS:Subscribe
             Resource: "*"
           - Sid: SQS
             Effect: Allow
