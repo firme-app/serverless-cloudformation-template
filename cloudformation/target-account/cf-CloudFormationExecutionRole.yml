@@ -92,6 +92,11 @@ Resources:
               - SNS:CreateTopic
               - SNS:TagResource
             Resource: "*"
+          - Sid: SQS
+            Effect: Allow
+            Action:
+              - SQS:*
+            Resource: "*"
 
 Outputs:
   OutCFExecutionRole:
