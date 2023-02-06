@@ -90,6 +90,7 @@ Resources:
             Action:
               - SNS:GetTopicAttributes
               - SNS:CreateTopic
+              - SNS:TagResource
             Resource: "*"
 
 Outputs:
