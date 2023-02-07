@@ -98,6 +98,14 @@ Resources:
             Action:
               - SQS:*
             Resource: "*"
+          - Sid: SystemsManager
+            Effect: Allow
+            Action:
+              - ssm:PutParameter
+              - ssm:AddTagsToResource
+              - ssm:AddTagsToResource
+              - ssm:RemoveTagsFromResource
+            Resource: "*"
 
 Outputs:
   OutCFExecutionRole:
