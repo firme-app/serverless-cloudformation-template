@@ -80,11 +80,6 @@ Resources:
               - logs:*
               - events:*
             Resource: "*"
-          - Sid: SystemsManager
-            Effect: Allow
-            Action:
-              - ssm:GetParameters
-            Resource: "*"
           - Sid: SNS
             Effect: Allow
             Action:
@@ -101,6 +96,7 @@ Resources:
           - Sid: SystemsManager
             Effect: Allow
             Action:
+              - ssm:GetParameters
               - ssm:PutParameter
               - ssm:AddTagsToResource
               - ssm:AddTagsToResource
